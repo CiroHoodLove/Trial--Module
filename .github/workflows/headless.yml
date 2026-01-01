@@ -1,0 +1,35 @@
+name: Headless Scraper
+on:
+  workflow_dispatch: # Manual Button
+  schedule:
+    - cron: '0 * * * *' # Every hour
+
+jobs:
+  scrape-job:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      # 1. Install Google Chrome and Xvfb (Virtual Screen)
+      - name: Install System Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y google-chrome-stable xvfb
+
+      # 2. Install Python Libraries
+      - name: Install Py Deps
+        run: pip install undetected-chromedriver selenium requests pyTelegramBotAPI
+
+      # 3. Run the Scraper with a Fake Screen
+      - name: Run Scraper
+        env:
+          # If you want to use Secrets, change these to ${{ secrets.VAR_NAME }}
+          # For now, I'll let the script use the hardcoded values you gave me.
+          dummy_var: "true" 
+        run: xvfb-run --auto-servernum --server-args="-screen 0 1280x960x24" python main.py
