@@ -11,75 +11,74 @@ CHAT_ID = "8050366911"
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-def get_real_image(url, retries=5):
+def get_image_data(prompt, model="flux"):
     """
-    Tries to download the image. If it's too small (meaning it's the 
-    Pollinations logo/placeholder), it waits and tries again.
+    Tries to download the image. 
+    If Flux fails/timeouts, it falls back to Turbo (faster).
     """
-    for attempt in range(retries):
-        try:
-            response = requests.get(url, timeout=30)
-            if response.status_code == 200:
-                # CHECK: Is this the real image or the logo?
-                # Real images are usually > 50KB. The logo is ~5-10KB.
-                if len(response.content) > 20000: 
-                    return response.content
-                else:
-                    print(f"⚠️ Got placeholder logo (Attempt {attempt+1}/{retries}). Waiting...")
-                    time.sleep(3) # Wait for server to finish rendering
-            else:
-                time.sleep(2)
-        except Exception as e:
-            print(f"Connection error: {e}")
-            time.sleep(2)
-    return None
+    seed = random.randint(0, 99999999)
+    # ⚠️ REMOVED 'nologo=true' to fix the infinite loading loop
+    url = f"https://image.pollinations.ai/prompt/{prompt}?width=1024&height=1024&seed={seed}&model={model}"
+    
+    print(f"🔄 Attempting ({model}): {prompt[:15]}...")
+    
+    try:
+        # 30 second timeout for high quality Flux
+        response = requests.get(url, timeout=30)
+        
+        if response.status_code == 200 and len(response.content) > 15000:
+            return response.content, seed
+        else:
+            print(f"⚠️ {model} failed (Size: {len(response.content)} bytes).")
+            return None, None
+            
+    except Exception as e:
+        print(f"❌ Error with {model}: {e}")
+        return None, None
 
 def process_prompt(prompt):
-    """Generates and sends as a FILE."""
     clean_prompt = prompt.strip()
     if not clean_prompt: return
 
-    print(f"⚙️ Processing: {clean_prompt[:20]}...")
-    
-    seed = random.randint(0, 99999999)
-    # Adding 'nologo=true' and 'enhance=true' for better quality
-    image_url = f"https://pollinations.ai/p/{clean_prompt}?width=1024&height=1024&seed={seed}&model=flux&nologo=true"
+    # 1. Try FLUX (High Quality)
+    image_data, seed = get_image_data(clean_prompt, model="flux")
 
-    # 1. Download the REAL image (skipping the logo)
-    image_data = get_real_image(image_url)
+    # 2. If Flux failed, force TURBO (Low Quality but Fast)
+    if not image_data:
+        print(f"⏩ Switching to TURBO for: {clean_prompt[:15]}")
+        image_data, seed = get_image_data(clean_prompt, model="turbo")
 
+    # 3. Send if we got anything
     if image_data:
-        # 2. Send as DOCUMENT (File)
         try:
-            # We give the file a name based on the seed so it looks professional
-            file_name = f"flux_gen_{seed}.png"
-            
+            filename = f"gen_{seed}.png"
+            # SEND AS DOCUMENT (FILE)
             bot.send_document(
                 CHAT_ID, 
                 image_data, 
-                visible_file_name=file_name
-                # No caption added here
+                visible_file_name=filename,
+                caption=f"Prompt: {clean_prompt}"
             )
-            print(f"✅ Sent FILE: {clean_prompt[:20]}")
+            print(f"✅ SENT FILE: {clean_prompt[:15]}")
         except Exception as e:
-            print(f"❌ Telegram Upload Error: {e}")
+            print(f"❌ Telegram Send Error: {e}")
     else:
-        print(f"❌ Failed to generate: {clean_prompt[:20]}")
+        print(f"💀 Completely failed: {clean_prompt[:15]}")
 
-def run_batch():
+def run_fast_batch():
     if not os.path.exists("prompts.txt"):
-        print("No prompts.txt found")
+        print("❌ No prompts.txt found")
         return
 
     with open("prompts.txt", "r") as f:
         prompts = [line.strip() for line in f if line.strip()]
 
-    print(f"🔥 Starting Batch: {len(prompts)} images...")
+    print(f"🔥 Starting Batch of {len(prompts)} images...")
     
-    # 3. Parallel Processing (Speed)
-    # Lowered workers slightly to 3 to prevent getting the 'Logo' too often
+    # 3 WORKERS = Safe Speed. 
+    # 5+ workers will get you rate-limited (IP banned) by Pollinations.
     with ThreadPoolExecutor(max_workers=3) as executor:
         executor.map(process_prompt, prompts)
 
 if __name__ == "__main__":
-    run_batch()
+    run_fast_batch()
